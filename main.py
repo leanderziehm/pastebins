@@ -5,7 +5,11 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import Column, Integer, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
-from passlib.context import CryptContext
+# from passlib.context import CryptContext
+from fastapi import Request
+from fastapi.templating import Jinja2Templates
+from sqlalchemy import select
+from fastapi import Path
 
 # -----------------------
 # Database configuration
@@ -13,7 +17,7 @@ from passlib.context import CryptContext
 
 POSTGRES_HOST = os.getenv("POSTGRES_HOST", "localhost")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "pastebin")
+POSTGRES_DB = os.getenv("POSTGRES_DB", "postgres")
 POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "postgres")
 
@@ -29,7 +33,22 @@ Base = declarative_base()
 # -----------------------
 # Password hashing setup
 # -----------------------
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+import bcrypt
+# Remove: from passlib.context import CryptContext
+# Remove: pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Add these helper functions instead:
+def hash_password(password: str) -> str:
+    """Hash a password for storing."""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a stored password against one provided by user."""
+    return bcrypt.checkpw(
+        plain_password.encode('utf-8'), 
+        hashed_password.encode('utf-8')
+    )
 
 # -----------------------
 # FastAPI app
@@ -43,9 +62,6 @@ templates = Jinja2Templates(directory="templates")
 # def index():
 #     return FileResponse("static/index.html")
 
-from fastapi import Request
-from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
 
 @app.get("/")
 def index(request: Request):
@@ -53,7 +69,11 @@ def index(request: Request):
         # order by stars DESC, then views DESC
         stmt = select(Paste).order_by(Paste.stars.desc(), Paste.views.desc())
         pastes = db.execute(stmt).scalars().all()
-    return templates.TemplateResponse("index.html", {"request": request, "pastes": pastes})
+    return templates.TemplateResponse(
+    request=request,
+    name="index.html",
+    context={"pastes": pastes},
+)
 
 # -----------------------
 # Database model
@@ -89,19 +109,22 @@ def read_paste(request: Request, slug: str, password: str | None = None):
     
         if not paste:
             return templates.TemplateResponse(
-                "edit.html", {"request": request, "slug": slug_lowercase}
-            )
+    request=request,
+    name="edit.html",
+    context={"slug": slug_lowercase},
+)
 
         content = paste.content
         password_hash = paste.password_hash
 
         # Check password if required
         if password_hash:
-            if not password or not pwd_context.verify(password, password_hash):
+            if not password or not verify_password(password,password_hash): #pwd_context.verify(password, password_hash):
                 return templates.TemplateResponse(
-                    "password.html",
-                    {"request": request, "slug": slug_lowercase, "error": bool(password)},
-                )
+    request=request,
+    name="password.html",
+    context={"slug": slug_lowercase, "error": bool(password)},
+)
 
         # Increment views
         paste.views += 1
@@ -110,9 +133,10 @@ def read_paste(request: Request, slug: str, password: str | None = None):
     
 
     return templates.TemplateResponse(
-        "view.html",
-        {"request": request, "slug": slug_lowercase, "content": content},
-    )
+    request=request,
+    name="view.html",
+    context={"slug": slug_lowercase, "content": content},
+)
 
 
 @app.post("/{slug}")
@@ -125,14 +149,14 @@ def create_paste(
         if db.get(Paste, slug):
             raise HTTPException(status_code=409, detail="Paste already exists")
 
-        password_hash = pwd_context.hash(password) if password else None
+        # password_hash = pwd_context.hash(password) if password else None
+        password_hash = hash_password(password) if password else None
         db.add(Paste(slug=slug, content=content, password_hash=password_hash))
         db.commit()
 
     return RedirectResponse(f"/{slug}", status_code=303)
 
 
-from fastapi import Path
 
 @app.post("/{slug}/star")
 def star_paste(slug: str = Path(...)):
