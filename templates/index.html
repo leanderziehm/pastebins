@@ -110,6 +110,7 @@
             <h2><a href="/{{ paste.slug }}">/{{ paste.slug }}</a></h2>
             <div class="paste-meta">
                 <span class="views">👁 {{ paste.views }}</span>
+                <span class="created_at"> {{paste.created_at.strftime('%Y-%m-%d %H:%M UTC')}}</span>
                 <span class="star">⭐ {{ paste.stars }}</span>
             </div>
         </div>

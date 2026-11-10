@@ -3,13 +3,14 @@ from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import Column, Integer, String, Text, create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 # from passlib.context import CryptContext
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from fastapi import Path
+from sqlalchemy import Column, Integer, String, Text, DateTime, create_engine
+from datetime import datetime, timezone
 
 # -----------------------
 # Database configuration
@@ -26,7 +27,7 @@ DATABASE_URL = (
     f"@{POSTGRES_HOST}:{POSTGRES_PORT}/{POSTGRES_DB}"
 )
 
-engine = create_engine(DATABASE_URL, future=True)
+engine = create_engine(DATABASE_URL, future=True, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False)
 Base = declarative_base()
 
@@ -49,6 +50,37 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         plain_password.encode('utf-8'), 
         hashed_password.encode('utf-8')
     )
+# -----------------------
+# Database model
+# -----------------------
+class Paste(Base):
+    __tablename__ = "pastes"
+
+    slug = Column(String(255), primary_key=True)
+    content = Column(Text, nullable=False)
+    password_hash = Column(String(255), nullable=True)  # optional hashed password
+
+    # NEW FIELDS
+    views = Column(Integer, default=0)  # how many times viewed
+    stars = Column(Integer, default=0)  # number of stars / likes
+
+    created_at = Column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False
+    )
+
+
+# Migrations:
+"""
+ALTER TABLE pastes
+ADD COLUMN created_at TIMESTAMP WITH TIME ZONE
+NOT NULL DEFAULT CURRENT_TIMESTAMP;
+"""
+# TODO add alembic
+
+
+Base.metadata.create_all(bind=engine)
 
 # -----------------------
 # FastAPI app
@@ -67,7 +99,7 @@ templates = Jinja2Templates(directory="templates")
 def index(request: Request):
     with SessionLocal() as db:
         # order by stars DESC, then views DESC
-        stmt = select(Paste).order_by(Paste.stars.desc(), Paste.views.desc())
+        stmt = select(Paste).order_by(Paste.created_at.desc(), Paste.stars.desc(), Paste.views.desc())
         pastes = db.execute(stmt).scalars().all()
     return templates.TemplateResponse(
     request=request,
@@ -75,22 +107,6 @@ def index(request: Request):
     context={"pastes": pastes},
 )
 
-# -----------------------
-# Database model
-# -----------------------
-class Paste(Base):
-    __tablename__ = "pastes"
-
-    slug = Column(String(255), primary_key=True)
-    content = Column(Text, nullable=False)
-    password_hash = Column(String(255), nullable=True)  # optional hashed password
-
-    # NEW FIELDS
-    views = Column(Integer, default=0)  # how many times viewed
-    stars = Column(Integer, default=0)  # number of stars / likes
-
-
-Base.metadata.create_all(bind=engine)
 
 # -----------------------
 # Routes
